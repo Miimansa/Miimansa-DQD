@@ -18,7 +18,7 @@ output:
 ---
 
 <!--
-%\VignetteEngine{knitr}
+%\VignetteEngine{knitr::knitr}
 %\VignetteIndexEntry{Data Quality Check Type Definitions}
 -->
 
