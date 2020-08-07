@@ -18,8 +18,8 @@ output:
 ---
 
 <!--
-%\VignetteEngine{knitr}
-%\VignetteIndexEntry{Failure Thresholds and How to Change Them}
+%\VignetteEngine{knitr::knitr}
+%\VignetteIndexEntry{Running the DQD on a Cohort}
 -->
 
 # DQD Cohort Functionality
