@@ -1,3 +1,27 @@
+---
+title: "Add a New Data Quality Check"
+author: "Don Torok"
+date: "2022-10-12"
+header-includes:
+    - \usepackage{fancyhdr}
+    - \pagestyle{fancy}
+    - \fancyhead{}
+    - \fancyhead[CO,CE]{Data Quality Check Type Definitions}
+    - \fancyfoot[CO,CE]{DataQualityDashboard Package Version 1.4.1}
+    - \fancyfoot[LE,RO]{\thepage}
+    - \renewcommand{\headrulewidth}{0.4pt}
+    - \renewcommand{\footrulewidth}{0.4pt}
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{knitr::knitr}
+%\VignetteIndexEntry{Add a New Data Quality Check}
+-->
+
 # Add a New Check to Data Quality Dashboard
 ## Steps
 1. Write the SQL query for your check.
