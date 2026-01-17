@@ -10,10 +10,12 @@ on:
 
 name: R-CMD-check
 
-# --- CHANGE: explicitly grant the built-in GITHUB_TOKEN permission to create releases/tags ---
-# This avoids relying on the admin PAT in secrets.GH_TOKEN for release creation.
-permissions:                      # <-- CHANGED: added
-  contents: write                 # <-- CHANGED: added (needed to create tags/releases)
+# Prevent duplicate runs when both push and pull_request trigger for the same branch
+# Uses branch name to group runs, so push and PR for the same branch share the same group
+# Newer runs will cancel older in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   R-CMD-check:
@@ -25,12 +27,13 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - {os: windows-latest, r: 'release'}
-          - {os: macOS-latest, r: 'release'}
-          - {os: ubuntu-24.04, r: 'release', rspm: "https://packagemanager.rstudio.com/cran/__linux__/noble/latest"}
+          - {os: windows-latest, r: 'release', rtools: '', rspm: "https://cloud.r-project.org"}
+          - {os: macOS-latest, r: 'release', rtools: '', rspm: "https://cloud.r-project.org"}
+          - {os: ubuntu-22.04, r: 'release', rspm: "https://packagemanager.posit.co/cran/__linux__/jammy/latest"}
 
     env:
       GITHUB_PAT: ${{ secrets.GH_TOKEN }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
       RSPM: ${{ matrix.config.rspm }}
       CDM5_ORACLE_CDM54_SCHEMA: ${{ secrets.CDM5_ORACLE_CDM54_SCHEMA }}
@@ -57,7 +60,7 @@ jobs:
       CDM_SNOWFLAKE_OHDSI_SCHEMA: ${{ secrets.CDM_SNOWFLAKE_OHDSI_SCHEMA }}
       CDM_SNOWFLAKE_PASSWORD: ${{ secrets.CDM_SNOWFLAKE_PASSWORD }}
       CDM_SNOWFLAKE_CONNECTION_STRING: ${{ secrets.CDM_SNOWFLAKE_CONNECTION_STRING }}
-      CDM_SNOWFLAKE_USER: ${{ secrets.CDM_SNOWFLAKE_USER }}
+      CDM_SNOWFLAKE_USER: ${{ secrets.CDM_SNOWFLAKE_USER }}      
       CDM5_SPARK_USER: ${{ secrets.CDM5_SPARK_USER }}
       CDM5_SPARK_PASSWORD: ${{ secrets.CDM5_SPARK_PASSWORD }}
       CDM5_SPARK_CONNECTION_STRING: ${{ secrets.CDM5_SPARK_CONNECTION_STRING }}
@@ -72,13 +75,16 @@ jobs:
       CDM_IRIS_PASSWORD: ${{ secrets.CDM_IRIS_PASSWORD }}
       CDM_IRIS_CDM_SCHEMA: ${{ secrets.CDM_IRIS_CDM_SCHEMA }}
       CDM_IRIS_OHDSI_SCHEMA: ${{ secrets.CDM_IRIS_OHDSI_SCHEMA }}
-      WEBAPI_TEST_WEBAPI_URL: ${{ secrets.WEBAPI_TEST_WEBAPI_URL }}
-      WEBAPI_TEST_SECURE_WEBAPI_URL: ${{ secrets.WEBAPI_TEST_SECURE_WEBAPI_URL }}
-      WEBAPI_TEST_ADMIN_USER_NAME: ${{ secrets.WEBAPI_TEST_ADMIN_USER_NAME }}
-      WEBAPI_TEST_ADMIN_USER_PASSWORD: ${{ secrets.WEBAPI_TEST_ADMIN_USER_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Setup Java
+        if: runner.os != 'Linux'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'corretto'
+          java-version: '8'
 
       - uses: r-lib/actions/setup-r@v2
         with:
@@ -96,9 +102,70 @@ jobs:
           while read -r cmd
           do
             eval sudo $cmd
-          done < <(Rscript -e 'writeLines(remotes::system_requirements("ubuntu", "24.04"))')
+          done < <(Rscript -e 'writeLines(remotes::system_requirements("ubuntu", "22.04"))')
+
+      - name: Configure pak for macOS reliability
+        if: runner.os == 'macOS'
+        run: |
+          # Clear any stale pak cache to avoid corrupted state
+          Rscript -e 'if (requireNamespace("pak", quietly = TRUE)) pak::cache_clean()' || true
+          # Create .Rprofile with pak options to reduce parallel downloads
+          # This will be read by R when setup-r-dependencies runs pak
+          mkdir -p ~
+          echo 'options(pak.parallel_downloads = 1L)' >> ~/.Rprofile
+          # Small delay to allow filesystem to settle
+          sleep 2
+        shell: bash
+
+      - name: Setup R dependencies with retry for macOS
+        if: runner.os == 'macOS'
+        continue-on-error: false
+        run: |
+          max_attempts=3
+          attempt=1
+          while [ $attempt -le $max_attempts ]; do
+            echo "Attempt $attempt of $max_attempts..."
+            if [ $attempt -gt 1 ]; then
+              echo "Cleaning pak cache before retry..."
+              Rscript -e 'if (requireNamespace("pak", quietly = TRUE)) pak::cache_clean()' || true
+              sleep 5
+            fi
+            
+            # Set environment variable that some R actions respect
+            export R_OPTIONS_PAK_PARALLEL_DOWNLOADS=1
+            
+            # Try running the setup-r-dependencies equivalent manually
+            # First, ensure pak is installed
+            Rscript -e 'if (!requireNamespace("pak", quietly = TRUE)) install.packages("pak", repos = Sys.getenv("RSPM", unset = "https://cloud.r-project.org"))'
+            
+            # Install dependencies using pak directly with retry logic
+            Rscript -e '
+              options(pak.parallel_downloads = 1L)
+              tryCatch({
+                pak::pkg_install("rcmdcheck", ask = FALSE)
+                lockfile <- ".github/pkg.lock"
+                if (file.exists(lockfile)) {
+                  pak::lockfile_install(lockfile)
+                } else {
+                  pak::local_install_deps(dependencies = TRUE, ask = FALSE)
+                }
+                cat("Dependencies installed successfully\n")
+              }, error = function(e) {
+                cat("Installation failed:", conditionMessage(e), "\n")
+                stop(e)
+              })
+            ' && break
+            
+            if [ $attempt -eq $max_attempts ]; then
+              echo "Failed after $max_attempts attempts"
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+          done
+        shell: bash
 
       - uses: r-lib/actions/setup-r-dependencies@v2
+        if: runner.os != 'macOS'
         with:
           extra-packages: any::rcmdcheck
           needs: check
@@ -106,7 +173,6 @@ jobs:
       - uses: r-lib/actions/check-r-package@v2
         with:
           args: 'c("--no-manual", "--as-cran")'
-          build_args: 'c("--compact-vignettes=both")'
           error-on: '"warning"'
           check-dir: '"check"'
 
@@ -123,7 +189,7 @@ jobs:
           remotes::install_cran("covr")
           remotes::install_cran("xml2")
         shell: Rscript {0}
-
+        
       - name: Test coverage
         if: runner.os == 'Linux'
         run: |
@@ -145,11 +211,11 @@ jobs:
 
   Release:
     needs: R-CMD-Check
+
     runs-on: macOS-latest
 
-    # --- CHANGE: remove the PAT-based GH_TOKEN env, since release creation will use GITHUB_TOKEN ---
-    # env:
-    #   GH_TOKEN: ${{ secrets.GH_TOKEN }}   # <-- CHANGED: removed/commented out (no longer needed for release)
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
     if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
 
@@ -172,8 +238,7 @@ jobs:
         if: ${{ env.new_version != '' }}
         uses: actions/create-release@v1
         env:
-          # --- CHANGE: use the built-in GITHUB_TOKEN instead of the admin PAT secret ---
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # <-- CHANGED: was secrets.GH_TOKEN
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         with:
           tag_name: ${{ env.new_version }}
           release_name: Release ${{ env.new_version }}
@@ -198,15 +263,12 @@ jobs:
 
       - name: Download package tarball
         if: ${{ env.new_version != '' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.7
         with:
           name: package_tarball
 
       - name: Push to drat
         if: ${{ env.new_version != '' }}
-        env:
-          # --- CHANGED: Prefer the existing PAT secret for cross-repo push to OHDSI/drat.
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           bash deploy.sh
 
