@@ -14,7 +14,7 @@ name: R-CMD-check
 # Uses branch name to group runs, so push and PR for the same branch share the same group
 # Newer runs will cancel older in-progress runs for the same branch
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && 'main' || github.head_ref || github.ref_name }}-${{ matrix.config.os }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
