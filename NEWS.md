@@ -1,3 +1,7 @@
+DataQualityDashboard 2.8.5
+==========================
+This release contains updates to the GitHub Actions workflow files to resolve some issues with workflow errors.
+
 DataQualityDashboard 2.8.4
 ==========================
 This release contains minor changes needed to support CRAN submission.
