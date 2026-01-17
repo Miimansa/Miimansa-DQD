@@ -77,6 +77,16 @@ jobs:
 
       - uses: r-lib/actions/setup-pandoc@v2
 
+      - name: Configure pak for macOS reliability
+        run: |
+          # Clear any stale pak cache to avoid corrupted state
+          Rscript -e 'if (requireNamespace("pak", quietly = TRUE)) pak::cache_clean()' || true
+          # Configure R options to reduce parallel downloads and improve reliability
+          echo 'options(pak.parallel_downloads = 1L)' >> ~/.Rprofile || true
+          # Small delay to allow filesystem to settle after cache cleanup
+          sleep 2
+        shell: bash
+
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           extra-packages: any::rcmdcheck
