@@ -10,6 +10,13 @@ on:
 
 name: R-CMD-check
 
+# Prevent duplicate runs when both push and pull_request trigger for the same branch
+# Uses branch name to group runs, so push and PR for the same branch share the same group
+# Newer runs will cancel older in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && 'main' || github.head_ref || github.ref_name }}-${{ matrix.config.os }}
+  cancel-in-progress: true
+
 jobs:
   R-CMD-check:
     runs-on: ${{ matrix.config.os }}
@@ -96,17 +103,6 @@ jobs:
           do
             eval sudo $cmd
           done < <(Rscript -e 'writeLines(remotes::system_requirements("ubuntu", "22.04"))')
-
-      - name: Configure pak for macOS reliability
-        if: runner.os == 'macOS'
-        run: |
-          # Clear any stale pak cache to avoid corrupted state
-          Rscript -e 'if (requireNamespace("pak", quietly = TRUE)) pak::cache_clean()' || true
-          # Configure R options to reduce parallel downloads and improve reliability
-          echo 'options(pak.parallel_downloads = 1L)' >> ~/.Rprofile || true
-          # Small delay to allow filesystem to settle after cache cleanup
-          sleep 2
-        shell: bash
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
