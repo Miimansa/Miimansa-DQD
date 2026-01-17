@@ -104,7 +104,68 @@ jobs:
             eval sudo $cmd
           done < <(Rscript -e 'writeLines(remotes::system_requirements("ubuntu", "22.04"))')
 
+      - name: Configure pak for macOS reliability
+        if: runner.os == 'macOS'
+        run: |
+          # Clear any stale pak cache to avoid corrupted state
+          Rscript -e 'if (requireNamespace("pak", quietly = TRUE)) pak::cache_clean()' || true
+          # Create .Rprofile with pak options to reduce parallel downloads
+          # This will be read by R when setup-r-dependencies runs pak
+          mkdir -p ~
+          echo 'options(pak.parallel_downloads = 1L)' >> ~/.Rprofile
+          # Small delay to allow filesystem to settle
+          sleep 2
+        shell: bash
+
+      - name: Setup R dependencies with retry for macOS
+        if: runner.os == 'macOS'
+        continue-on-error: false
+        run: |
+          max_attempts=3
+          attempt=1
+          while [ $attempt -le $max_attempts ]; do
+            echo "Attempt $attempt of $max_attempts..."
+            if [ $attempt -gt 1 ]; then
+              echo "Cleaning pak cache before retry..."
+              Rscript -e 'if (requireNamespace("pak", quietly = TRUE)) pak::cache_clean()' || true
+              sleep 5
+            fi
+            
+            # Set environment variable that some R actions respect
+            export R_OPTIONS_PAK_PARALLEL_DOWNLOADS=1
+            
+            # Try running the setup-r-dependencies equivalent manually
+            # First, ensure pak is installed
+            Rscript -e 'if (!requireNamespace("pak", quietly = TRUE)) install.packages("pak", repos = Sys.getenv("RSPM", unset = "https://cloud.r-project.org"))'
+            
+            # Install dependencies using pak directly with retry logic
+            Rscript -e '
+              options(pak.parallel_downloads = 1L)
+              tryCatch({
+                pak::pkg_install("rcmdcheck", ask = FALSE)
+                lockfile <- ".github/pkg.lock"
+                if (file.exists(lockfile)) {
+                  pak::lockfile_install(lockfile)
+                } else {
+                  pak::local_install_deps(dependencies = TRUE, ask = FALSE)
+                }
+                cat("Dependencies installed successfully\n")
+              }, error = function(e) {
+                cat("Installation failed:", conditionMessage(e), "\n")
+                stop(e)
+              })
+            ' && break
+            
+            if [ $attempt -eq $max_attempts ]; then
+              echo "Failed after $max_attempts attempts"
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+          done
+        shell: bash
+
       - uses: r-lib/actions/setup-r-dependencies@v2
+        if: runner.os != 'macOS'
         with:
           extra-packages: any::rcmdcheck
           needs: check
