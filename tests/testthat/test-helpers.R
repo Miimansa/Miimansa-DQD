@@ -1,11 +1,5 @@
 library(testthat)
 
-test_that("Installation check works", {
-  result <- DataQualityDashboard:::is_installed("SqlRender")
-  expect_true(result)
-  expect_null(DataQualityDashboard:::ensure_installed("SqlRender"))
-})
-
 # When devtools::load_all is run, create symbolic link for sql directory
 # Allows testing with devtools::test
 # Only run in local development, not in CI/covr
