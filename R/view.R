@@ -24,12 +24,13 @@
 #'
 #' @return NULL (launches Shiny application)
 #'
-#' @importFrom utils menu install.packages
 #' @importFrom jsonlite toJSON parse_json
 #'
 #' @export
 viewDqDashboard <- function(jsonPath, launch.browser = NULL, display.mode = NULL, ...) {
-  ensure_installed("shiny")
+  if (!requireNamespace("shiny", quietly = TRUE)) {
+    stop("The 'shiny' package must be installed to use this function. Please install it with: install.packages(\"shiny\")", call. = FALSE)
+  }
 
   Sys.setenv(jsonPath = jsonPath)
   appDir <- system.file("shinyApps", package = "DataQualityDashboard")
@@ -43,41 +44,4 @@ viewDqDashboard <- function(jsonPath, launch.browser = NULL, display.mode = NULL
   }
 
   shiny::runApp(appDir = appDir, launch.browser = launch.browser, display.mode = display.mode, ...)
-}
-
-
-# Borrowed from devtools:
-# https://github.com/hadley/devtools/blob/ba7a5a4abd8258c52cb156e7b26bb4bf47a79f0b/R/utils.r#L44
-#' @return A logical value indicating whether the package is installed
-#' @keywords internal
-is_installed <- function(pkg, version = "0") {
-  installed_version <-
-    tryCatch(
-      utils::packageVersion(pkg),
-      error = function(e) {
-        NA
-      }
-    )
-  return(!is.na(installed_version) && installed_version >= version)
-}
-
-# Borrowed and adapted from devtools:
-# https://github.com/hadley/devtools/blob/ba7a5a4abd8258c52cb156e7b26bb4bf47a79f0b/R/utils.r#L74
-#' @return NULL (installs package if needed or stops with error)
-#' @keywords internal
-ensure_installed <- function(pkg) {
-  if (!is_installed(pkg)) {
-    msg <-
-      paste0(sQuote(pkg), " must be installed for this functionality.")
-    if (interactive()) {
-      message(msg, "\nWould you like to install it?")
-      if (menu(c("Yes", "No")) == 1) {
-        install.packages(pkg)
-      } else {
-        stop(msg, call. = FALSE)
-      }
-    } else {
-      stop(msg, call. = FALSE)
-    }
-  }
 }
