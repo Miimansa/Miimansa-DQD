@@ -33,8 +33,9 @@
 #' @param sqlOnlyUnionCount         (OPTIONAL) How many SQL commands to union before inserting them into output table (speeds processing when queries done in parallel). Default is 1.
 #' @param sqlOnlyIncrementalInsert  (OPTIONAL) Boolean to determine whether insert check results and associated metadata into output table.  Default is FALSE (for backwards compatability to <= v2.2.0)
 #' @param sqlOnly                   Should the SQLs be executed (FALSE) or just returned (TRUE)?
+#' @param verboseOutput             When TRUE, load SQL from inst/sql/sql_server_verbose/ and return per-row violating records alongside summary stats.
 #'
-#' @return A dataframe containing the check results or SQL queries (NULL if sqlOnlyIncrementalInsert is TRUE)
+#' @return A list of per-check result objects (verboseOutput=TRUE) or a dataframe (verboseOutput=FALSE), or SQL queries
 #'
 #' @import magrittr
 #'
@@ -56,7 +57,8 @@
                       outputFolder,
                       sqlOnlyUnionCount,
                       sqlOnlyIncrementalInsert,
-                      sqlOnly) {
+                      sqlOnly,
+                      verboseOutput = FALSE) {
   ParallelLogger::logInfo(sprintf("Processing check description: %s", checkDescription$checkName))
 
   filterExpression <- sprintf(
@@ -73,6 +75,105 @@
   }
 
   if (nrow(checks) > 0) {
+    # ── Verbose path ──────────────────────────────────────────────────────────
+    # Must use lapply (not apply) because apply calls simplify2array on the
+    # results, which converts a list of list(summary, violatingRows) objects
+    # into a 2×N matrix — rendering the structure completely wrong.
+    if (verboseOutput) {
+      # Convert to matrix first so each row arrives as a named character vector,
+      # exactly as apply() would deliver it, preserving param-rendering behaviour.
+      checksMat <- as.matrix(checks)
+
+      results <- lapply(seq_len(nrow(checksMat)), function(ri) {
+        check <- checksMat[ri, ]
+
+        columns <- lapply(names(check), function(c) {
+          setNames(check[c], c)
+        })
+
+        verboseSqlFile <- system.file(
+          "sql", "sql_server_verbose", checkDescription$sqlFile,
+          package = "DataQualityDashboard"
+        )
+        if (verboseSqlFile == "") {
+          ParallelLogger::logWarn(sprintf(
+            "No verbose SQL found for %s — skipping check instance for %s.%s",
+            checkDescription$checkName,
+            check["cdmTableName"], check["cdmFieldName"]
+          ))
+          return(NULL)
+        }
+
+        renderParams <- c(
+          list(sql = SqlRender::readSql(verboseSqlFile)),
+          list(warnOnMissingParameters = FALSE),
+          list(cdmDatabaseSchema = cdmDatabaseSchema),
+          list(cohortDatabaseSchema = cohortDatabaseSchema),
+          list(cohortTableName = cohortTableName),
+          list(cohortDefinitionId = cohortDefinitionId),
+          list(vocabDatabaseSchema = vocabDatabaseSchema),
+          list(cohort = cohort),
+          unlist(columns, recursive = FALSE)
+        )
+
+        sql <- SqlRender::translate(
+          do.call(SqlRender::render, renderParams),
+          targetDialect = connectionDetails$dbms
+        )
+
+        # ── Look up the scoped denominator SQL for this check ────────────
+        # Lives in a separate folder, one file per check, same filename as
+        # the sql_server_verbose file. If it hasn't been added yet for this
+        # check, denomSql stays NULL and .processCheck() will fall back to
+        # a naive COUNT(*), flagged accordingly.
+        denomSqlFile <- system.file(
+          "sql", "verbose_denominator", checkDescription$sqlFile,
+          package = "DataQualityDashboard"
+        )
+        denomSql <- if (denomSqlFile != "") {
+          denomRenderParams <- renderParams
+          denomRenderParams$sql <- SqlRender::readSql(denomSqlFile)
+          SqlRender::translate(
+            do.call(SqlRender::render, denomRenderParams),
+            targetDialect = connectionDetails$dbms
+          )
+        } else {
+          ParallelLogger::logWarn(sprintf(
+            "No scoped denominator SQL found for %s — %s.%s will use a naive COUNT(*) fallback.",
+            checkDescription$checkName,
+            check["cdmTableName"], check["cdmFieldName"]
+          ))
+          NULL
+        }
+
+        instanceLabel <- sprintf("[%s] %s.%s (%d/%d)",
+          checkDescription$checkName,
+          check["cdmTableName"], check["cdmFieldName"],
+          ri, nrow(checksMat))
+        ParallelLogger::logInfo(sprintf("START  %s", instanceLabel))
+        instanceStart <- proc.time()[["elapsed"]]
+
+        result <- .processCheck(
+          connection = connection,
+          connectionDetails = connectionDetails,
+          check = check,
+          checkDescription = checkDescription,
+          sql = sql,
+          outputFolder = outputFolder,
+          verboseOutput = TRUE,
+          maxViolatingRows = 1000L,
+          denomSql = denomSql
+        )
+
+        elapsed <- round(proc.time()[["elapsed"]] - instanceStart, 1)
+        ParallelLogger::logInfo(sprintf("DONE   %s  [%.1fs]", instanceLabel, elapsed))
+        result
+      })
+
+      return(Filter(Negate(is.null), results))
+    }
+
+    # ── Non-verbose path (unchanged) ──────────────────────────────────────────
     dfs <- apply(X = checks, MARGIN = 1, function(check) {
       columns <- lapply(names(check), function(c) {
         setNames(check[c], c)
@@ -124,8 +225,6 @@
       }
     })
 
-    dfs <- do.call(rbind, dfs)
-
     if (sqlOnly && sqlOnlyIncrementalInsert) {
       sqlToUnion <- dfs$query
       if (length(sqlToUnion) > 0) {
@@ -137,6 +236,7 @@
     }
   } else {
     ParallelLogger::logWarn(paste0("Warning: Evaluation resulted in no checks: ", filterExpression))
+    if (verboseOutput) return(list())
     return(data.frame())
   }
 }

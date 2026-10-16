@@ -178,5 +178,11 @@
     checkResults <- .calculateNotApplicableStatus(checkResults)
   }
 
+  checkResults$passed <- as.integer(
+    checkResults$failed == 0 &
+      checkResults$isError == 0 &
+      checkResults$notApplicable == 0
+  )
+
   checkResults
 }

@@ -14,6 +14,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#' @title Row-level violations filename
+#'
+#' @description Derives the row-level violations JSON filename from the
+#' standard results JSON filename (\code{outputFile}). This is the single
+#' source of truth for that naming rule -- used internally by
+#' \code{executeDqChecks()} when writing the row-level file, and by
+#' \code{runner/run_dqd.R} when deciding which file to pass to
+#' \code{writeDqdJsonToCustomTables()}. Keeping this logic in one place means
+#' there is only one config value to set (\code{outputFile}); the row-level
+#' filename always stays in sync with it rather than being configured
+#' separately.
+#'
+#' @param outputFile The standard results JSON filename, e.g. "results.json"
+#'
+#' @return The paired row-level violations filename, e.g.
+#' "results_rowLevelViolations.json"
+#'
+#' @export
+rowLevelViolationsFileName <- function(outputFile) {
+  sub("\\.json$", "_rowLevelViolations.json", outputFile)
+}
+
 #' @title Execute DQ checks
 #'
 #' @description This function will connect to the database, generate the sql scripts, and run the data quality checks against the database. By default, results will be written to a json file as well as a database table.
@@ -46,6 +68,9 @@
 #' @param tableCheckThresholdLoc    The location of the threshold file for evaluating the table checks. If not specified the default thresholds will be applied.
 #' @param fieldCheckThresholdLoc    The location of the threshold file for evaluating the field checks. If not specified the default thresholds will be applied.
 #' @param conceptCheckThresholdLoc  The location of the threshold file for evaluating the concept checks. If not specified the default thresholds will be applied.
+#' @param verboseOutput             Boolean. When TRUE, use verbose SQL from inst/sql/sql_server_verbose/ which returns the actual violating rows
+#'                                  rather than aggregate counts. Checks with no row-level representation (cdmTable, cdmField) are skipped.
+#'                                  Violating rows are attached per check in the JSON output. Default is FALSE.
 #'
 #' @return A list object of results
 #'
@@ -86,7 +111,8 @@ executeDqChecks <- function(connectionDetails,
                             cdmVersion = "5.3",
                             tableCheckThresholdLoc = "default",
                             fieldCheckThresholdLoc = "default",
-                            conceptCheckThresholdLoc = "default") {
+                            conceptCheckThresholdLoc = "default",
+                            verboseOutput = FALSE) {
   # Check input -------------------------------------------------------------------------------------------------------------------
   if (!any(class(connectionDetails) %in% c("connectionDetails", "ConnectionDetails"))) {
     stop("connectionDetails must be an object of class 'connectionDetails' or 'ConnectionDetails'.")
@@ -102,6 +128,7 @@ executeDqChecks <- function(connectionDetails,
 
   stopifnot(is.character(cdmDatabaseSchema), is.character(resultsDatabaseSchema), is.numeric(numThreads))
   stopifnot(is.character(cdmSourceName), is.logical(sqlOnly), is.character(outputFolder), is.logical(verboseMode))
+  stopifnot(is.logical(verboseOutput))
   stopifnot(is.logical(writeToTable), is.character(checkLevels))
   stopifnot(is.numeric(sqlOnlyUnionCount) && sqlOnlyUnionCount > 0)
   stopifnot(is.logical(sqlOnlyIncrementalInsert))
@@ -246,6 +273,9 @@ executeDqChecks <- function(connectionDetails,
 
   fieldChecks <- merge(x = fieldChecks, y = tableChecks[, c("cdmTableName", "schema")], by = "cdmTableName", all.x = TRUE)
 
+  # Concept checks also need the schema (derived from their CDM table's schema)
+  conceptChecks <- merge(x = conceptChecks, y = tableChecks[, c("cdmTableName", "schema")], by = "cdmTableName", all.x = TRUE)
+
   checksToInclude <- checkDescriptionsDf$checkName[sapply(checkDescriptionsDf$checkName, function(check) {
     !is.null(eval(parse(text = sprintf("tableChecks$%s", check)))) |
       !is.null(eval(parse(text = sprintf("fieldChecks$%s", check)))) |
@@ -260,6 +290,13 @@ executeDqChecks <- function(connectionDetails,
 
   if (length(checkNames) > 0) {
     checkDescriptionsDf <- checkDescriptionsDf[checkDescriptionsDf$checkName %in% checkNames, ]
+  }
+
+  # Verbose mode: drop checks that have no row-level SQL equivalent
+  if (verboseOutput) {
+    verboseUnsupported <- c("cdmTable", "cdmField")
+    checkDescriptionsDf <- checkDescriptionsDf[!checkDescriptionsDf$checkName %in% verboseUnsupported, ]
+    ParallelLogger::logInfo("verboseOutput=TRUE: skipping non-row-level checks: cdmTable, cdmField")
   }
 
   if (nrow(checkDescriptionsDf) == 0) {
@@ -303,6 +340,7 @@ executeDqChecks <- function(connectionDetails,
     sqlOnlyUnionCount,
     sqlOnlyIncrementalInsert,
     sqlOnly,
+    verboseOutput,
     progressBar = TRUE
   )
   ParallelLogger::stopCluster(cluster = cluster)
@@ -310,33 +348,92 @@ executeDqChecks <- function(connectionDetails,
   allResults <- NULL
 
   if (!sqlOnly) {
-    checkResults <- do.call(rbind, resultsList)
+    if (verboseOutput) {
+      # In verbose mode resultsList is a list of lists (one per check type),
+      # each element itself a list of per-check result objects.
+      # Flatten into a single list of check result objects.
+      checkResultsList <- unlist(resultsList, recursive = FALSE)
+      checkResultsList <- Filter(Negate(is.null), checkResultsList)
+      checkResultsList <- unname(checkResultsList)
 
-    # evaluate thresholds-------------------------------------------------------------------
-    checkResults <- .evaluateThresholds(
-      checkResults = checkResults,
-      tableChecks = tableChecks,
-      fieldChecks = fieldChecks,
-      conceptChecks = conceptChecks
-    )
+      # Derive a plain dataframe of summary stats for threshold evaluation
+      checkResultsDf <- do.call(rbind, lapply(checkResultsList, function(cr) cr$summary))
 
-    # create overview
-    overview <- .summarizeResults(checkResults = checkResults)
+      # evaluate thresholds against the summary dataframe
+      checkResultsDf <- .evaluateThresholds(
+        checkResults = checkResultsDf,
+        tableChecks = tableChecks,
+        fieldChecks = fieldChecks,
+        conceptChecks = conceptChecks
+      )
 
-    endTime <- Sys.time()
-    delta <- endTime - startTime
+      # Merge the pass/fail columns back into each per-check result object
+      for (i in seq_along(checkResultsList)) {
+        cid <- checkResultsList[[i]]$summary$checkId
+        row <- checkResultsDf[checkResultsDf$checkId == cid, ]
+        checkResultsList[[i]]$summary$failed          <- row$failed
+        checkResultsList[[i]]$summary$passed          <- row$passed
+        checkResultsList[[i]]$summary$isError         <- row$isError
+        checkResultsList[[i]]$summary$notApplicable   <- row$notApplicable
+        checkResultsList[[i]]$summary$notApplicableReason <- row$notApplicableReason
+        checkResultsList[[i]]$summary$thresholdValue  <- row$thresholdValue
+        checkResultsList[[i]]$summary$notesValue      <- row$notesValue
+        # Drop violating rows for checks that did not fail — no need to carry
+        # them in memory or serialize them to JSON.
+        if (row$failed != 1) {
+          checkResultsList[[i]]$violatingRows <- NULL
+        }
+      }
 
-    # Create result
-    allResults <- list(
-      startTimestamp = startTime,
-      endTimestamp = endTime,
-      executionTime = sprintf("%.0f %s", delta, attr(delta, "units")),
-      # new variable executionTimeSeconds added to store execution time in seconds
-      executionTimeSeconds = as.numeric(delta),
-      CheckResults = checkResults,
-      Metadata = metadata,
-      Overview = overview
-    )
+      overview <- .summarizeResults(checkResults = checkResultsDf)
+
+      endTime <- Sys.time()
+      delta <- endTime - startTime
+
+      # Standard schema (results.json): CheckResults is the flat, standard
+      # dataframe of result rows -- same shape as non-verbose output, with no
+      # violatingRows. This keeps results.json compatible with the Shiny
+      # viewer, writeJsonResultsToCsv() and writeJsonResultsToTable(). Row-level
+      # violation data is written separately below (see rowLevelViolationsFile)
+      # and is only ever persisted to the database, never to results.json.
+      allResults <- list(
+        startTimestamp = startTime,
+        endTimestamp = endTime,
+        executionTime = sprintf("%.0f %s", delta, attr(delta, "units")),
+        executionTimeSeconds = as.numeric(delta),
+        CheckResults = checkResultsDf,
+        Metadata = metadata,
+        Overview = overview
+      )
+    } else {
+      checkResults <- do.call(rbind, resultsList)
+
+      # evaluate thresholds-------------------------------------------------------------------
+      checkResults <- .evaluateThresholds(
+        checkResults = checkResults,
+        tableChecks = tableChecks,
+        fieldChecks = fieldChecks,
+        conceptChecks = conceptChecks
+      )
+
+      # create overview
+      overview <- .summarizeResults(checkResults = checkResults)
+
+      endTime <- Sys.time()
+      delta <- endTime - startTime
+
+      # Create result
+      allResults <- list(
+        startTimestamp = startTime,
+        endTimestamp = endTime,
+        executionTime = sprintf("%.0f %s", delta, attr(delta, "units")),
+        # new variable executionTimeSeconds added to store execution time in seconds
+        executionTimeSeconds = as.numeric(delta),
+        CheckResults = checkResults,
+        Metadata = metadata,
+        Overview = overview
+      )
+    }
 
     # Write result
     if (nchar(outputFile) == 0) {
@@ -346,6 +443,15 @@ executeDqChecks <- function(connectionDetails,
 
     .writeResultsToJson(allResults, outputFolder, outputFile)
 
+    if (verboseOutput) {
+      # Row-level violations live only here, never in results.json. Same
+      # folder as results.json, named after it, so the pair is easy to find.
+      rowLevelViolationsFile <- rowLevelViolationsFileName(outputFile)
+      rowLevelViolationsResults <- allResults
+      rowLevelViolationsResults$CheckResults <- checkResultsList
+      .writeResultsToJson(rowLevelViolationsResults, outputFolder, rowLevelViolationsFile)
+    }
+
     ParallelLogger::logInfo("Execution Complete")
   } else {
     .writeDDL(resultsDatabaseSchema, writeTableName, connectionDetails$dbms, outputFolder)
@@ -353,7 +459,7 @@ executeDqChecks <- function(connectionDetails,
 
   # write to table ----------------------------------------------------------------------
 
-  if (!sqlOnly && writeToTable) {
+  if (!sqlOnly && writeToTable && !verboseOutput) {
     .writeResultsToTable(
       connectionDetails = connectionDetails,
       resultsDatabaseSchema = resultsDatabaseSchema,
@@ -365,7 +471,7 @@ executeDqChecks <- function(connectionDetails,
 
   # write to CSV ----------------------------------------------------------------------
 
-  if (!sqlOnly && writeToCsv) {
+  if (!sqlOnly && writeToCsv && !verboseOutput) {
     if (nchar(csvFile) == 0) {
       csvFile <- sprintf("%s.csv", sub(pattern = "(.*)\\..*$", replacement = "\\1", basename(allResults$outputFile)))
     }

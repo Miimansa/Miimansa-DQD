@@ -27,7 +27,7 @@
 .writeResultsToJson <- function(result,
                                 outputFolder,
                                 outputFile) {
-  resultJson <- jsonlite::toJSON(result)
+  resultJson <- jsonlite::toJSON(result, pretty = TRUE, auto_unbox = TRUE)
 
   resultFilename <- file.path(outputFolder, outputFile)
   result$outputFile <- outputFile

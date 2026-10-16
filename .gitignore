@@ -46,3 +46,9 @@ vignettes/*.log
 *.log
 /sql
 .cursor
+dqd_output_extended_copy_yes
+
+# Local runner config (contains real credentials/host/schema names).
+# Copy runner/dqd_config.example.R to runner/dqd_config.R and fill in your
+# own values; the real file should never be committed.
+runner/dqd_config.R
