@@ -1,3 +1,15 @@
+Miimansa DQD (unreleased)
+=========================
+First release of the Miimansa fork, based on DataQualityDashboard 2.8.6. It adds row-level traceability for failed checks.
+
+- `executeDqChecks(verboseOutput = TRUE)` runs row-level versions of the checks (`inst/sql/sql_server_verbose/`) and captures the records that cause each check to fail. `cdmTable` and `cdmField` checks have no row-level equivalent and are skipped in this mode.
+- Row-level violations are written to a separate `<name>_rowLevelViolations.json` next to `results.json`. `results.json` keeps the standard schema and never contains row-level data. The new exported helper `rowLevelViolationsFileName()` derives the paired filename.
+- New `writeDqdJsonToCustomTables()` persists failed checks and their violating rows to `dim_dqd_tests` and `fact_dqd_violations`.
+- Denominators for row-level checks come from `inst/sql/verbose_denominator/`, and the OMOP CDM 5.4 field-level `runForCohort` flags have been updated.
+- Check results include a `passed` column, and results JSON is written pretty-printed.
+- New `runner/` scripts (`setup.R`, `run_dqd.R`, `smoke_test_viewer.R`, `dqd_config.example.R`) for running DQD against a PostgreSQL OMOP CDM from a single config file.
+- New documentation: `FOR_DEVELOPERS.md` and `RESULTS_SCHEMA.md`.
+
 DataQualityDashboard 2.8.6
 ==========================
 This release contains minor changes needed to support CRAN submission.

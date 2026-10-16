@@ -4,11 +4,12 @@ extras
 ^\.git
 man-roxygen
 _pkgdown\.yml
-deploy\.sh
-compare_versions
 \.github
 docs
 ^LICENSE$
+^CONTRIBUTING\.md$
+^CODE_OF_CONDUCT\.md$
+^SECURITY\.md$
 ^inst/doc/.*\.pdf$
 \.lintr
 \.cursor

@@ -1,4 +1,7 @@
 # Copyright 2026 Observational Health Data Sciences and Informatics
+# Modified 2026 by Miimansa: adds verboseOutput (row-level violation capture), writes
+# row-level violations to a separate <name>_rowLevelViolations.json, and adds
+# rowLevelViolationsFileName().
 #
 # This file is part of DataQualityDashboard
 #

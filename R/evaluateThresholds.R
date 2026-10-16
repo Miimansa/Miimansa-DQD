@@ -1,4 +1,5 @@
 # Copyright 2026 Observational Health Data Sciences and Informatics
+# Modified 2026 by Miimansa: adds a `passed` column to check results.
 #
 # This file is part of DataQualityDashboard
 #
