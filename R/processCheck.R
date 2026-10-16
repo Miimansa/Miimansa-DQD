@@ -1,4 +1,6 @@
 # Copyright 2026 Observational Health Data Sciences and Informatics
+# Modified 2026 by Miimansa: runs verbose (row-level) SQL and returns violating rows
+# alongside the check summary.
 #
 # This file is part of DataQualityDashboard
 #

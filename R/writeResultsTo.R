@@ -1,4 +1,5 @@
 # Copyright 2026 Observational Health Data Sciences and Informatics
+# Modified 2026 by Miimansa: writes results JSON pretty-printed with unboxed scalars.
 #
 # This file is part of DataQualityDashboard
 #

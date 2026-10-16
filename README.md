@@ -1,12 +1,15 @@
-DataQualityDashboard
-====================
+Miimansa DQD
+============
 
-<!-- badges: start -->
-[![codecov](https://codecov.io/gh/OHDSI/DataQualityDashboard/branch/main/graph/badge.svg)](https://app.codecov.io/gh/OHDSI/DataQualityDashboard)
-[![Build Status](https://github.com/OHDSI/DataQualityDashboard/workflows/R-CMD-check/badge.svg)](https://github.com/OHDSI/DataQualityDashboard/actions?query=workflow%3AR-CMD-check)
-<!-- badges: end -->
+Miimansa DQD is [Miimansa](https://miimansa.com)'s fork of [OHDSI DataQualityDashboard](https://github.com/OHDSI/DataQualityDashboard), a part of [HADES](https://ohdsi.github.io/Hades/). It adds **row-level traceability** to the data quality checks: as well as reporting how many records fail a check, it can capture which records failed and persist them to database tables, so failures can be investigated and fixed at the source.
 
-DataQualityDashboard is part of [HADES](https://ohdsi.github.io/Hades/).
+What this fork adds:
+
+* **Row-level violation capture.** With `verboseOutput = TRUE`, `executeDqChecks()` records the rows that cause each check to fail and writes them to a separate `<name>_rowLevelViolations.json`. `results.json` keeps the standard schema, so the dashboard and the existing export functions work unchanged.
+* **Persistence to database tables.** `writeDqdJsonToCustomTables()` loads failed checks and their violating rows into `dim_dqd_tests` and `fact_dqd_violations`.
+* **A config-driven local runner** (`runner/`) for running DQD end to end against a PostgreSQL OMOP CDM.
+
+Everything else is upstream DataQualityDashboard. See [NEWS.md](NEWS.md) for the full list of changes.
 
 The goal of the Data Quality Dashboard (DQD) project is to design and develop an open-source tool to expose and evaluate observational data quality. 
 
@@ -18,17 +21,17 @@ A variety of database platforms are supported, as documented [here](https://ohds
 
 Note that while data quality check threshold files are provided for OMOP CDM versions 5.2, 5.3, and 5.4, the package is currently only tested against versions 5.3 and 5.4.
 
-To run the local KT runner (`runner/setup.R` / `runner/run_dqd.R`) end to end, you will also need:
+To run the local runner (`runner/setup.R` / `runner/run_dqd.R`) end to end, you will also need:
 
 * **Java (JDK or JRE)**, required by the JDBC driver `DatabaseConnector` uses to connect to the database.
 * **A reachable PostgreSQL database with an OMOP CDM already loaded** (the runner is configured for PostgreSQL by default; other platforms from the supported-platforms list above will need the corresponding driver).
 * **Environment variables for credentials**, rather than committing them to `runner/dqd_config.R` -- covered in Configure The Run below.
 * **Network access to download the JDBC driver** the first time `runner/setup.R` runs (or set `DQD_DOWNLOAD_JDBC=FALSE` if you already have it in place).
 
-Local KT Runner
-===============
+Local Runner
+============
 
-This checkout includes a local runner for executing DQD against a PostgreSQL OMOP CDM database and persisting failed-row details into custom result tables. The workflow is: Setup, once per machine, then Configure and Run each time you point it at a database. Each step is covered in its own section below.
+This repository includes a local runner for executing DQD against a PostgreSQL OMOP CDM database and persisting failed-row details into custom result tables. The workflow is: Setup, once per machine, then Configure and Run each time you point it at a database. Each step is covered in its own section below.
 
 Setup
 =====
@@ -36,7 +39,8 @@ Setup
 Run setup first on a new machine, new R library, or after package dependency changes:
 
 ```bash
-cd DataQualityDashboard
+git clone https://github.com/Miimansa/Miimansa-DQD.git
+cd Miimansa-DQD
 Rscript runner/setup.R
 ```
 
@@ -140,10 +144,6 @@ Configuration files (edit these, don't run them):
 * `runner/dqd_config.R`: database, schema, check, output, and persistence configuration. Gitignored; never committed.
 * `runner/dqd_config.example.R`: sanitized template for `runner/dqd_config.R`; copy and fill in your own values.
 
-There is no `initial.R` entrypoint. The old one-off scripts were consolidated into `runner/run_dqd.R`.
-
-The old `analysis/` and `to_run/` script folders were consolidated into `runner/` to keep one clear execution path.
-Top-level exploratory notebooks and review artifacts, if needed for KT context, live in `../reference_artifacts/`; they are not required to run DQD.
 
 For Developers
 ==============
@@ -209,25 +209,27 @@ Technology
 ==========
 DataQualityDashboard is an R package 
 
-Upstream Package Installation
-=============================
+Package Installation
+====================
 
-The section below is the original OHDSI package installation guidance. For this checkout's local KT workflow, use `runner/setup.R` followed by `runner/run_dqd.R` as described above.
+To use the package directly rather than through the local runner:
 
 1. See the instructions [here](https://ohdsi.github.io/Hades/rSetup.html) for configuring your R environment, including RTools and Java.
 
-2. In R, use the following commands to download and install DataQualityDashboard:
+2. In R, use the following commands to download and install Miimansa DQD:
 
   ```r
   install.packages("remotes")
-  remotes::install_github("OHDSI/DataQualityDashboard")
+  remotes::install_github("Miimansa/Miimansa-DQD")
   ```
+
+The package name is still `DataQualityDashboard`, so it replaces the upstream OHDSI package if you have that installed.
 
 User Documentation
 ==================
-Documentation can be found on the [package website](https://ohdsi.github.io/DataQualityDashboard/index.html).
+The upstream documentation covers everything apart from the row-level traceability features, which are described above and in [`RESULTS_SCHEMA.md`](RESULTS_SCHEMA.md) and [`FOR_DEVELOPERS.md`](FOR_DEVELOPERS.md). It can be found on the [upstream package website](https://ohdsi.github.io/DataQualityDashboard/index.html).
 
-PDF versions of the documentation are also available:
+PDF versions of the upstream documentation are also available:
 
 * Vignette: [Add a New Data Quality Check](https://github.com/OHDSI/DataQualityDashboard/raw/main/inst/doc/AddNewCheck.pdf)
 * Vignette: [Check Status Descriptions](https://github.com/OHDSI/DataQualityDashboard/raw/main/inst/doc/CheckStatusDefinitions.pdf)
@@ -239,22 +241,20 @@ PDF versions of the documentation are also available:
 Support
 =======
 
-* Developer questions/comments/feedback: <a href="http://forums.ohdsi.org/c/developers">OHDSI Forum</a>
-* We use the <a href="https://github.com/OHDSI/DataQualityDashboard/issues">GitHub issue tracker</a> for all bugs/issues/enhancements 
- 
+* Bugs and feature requests for this fork: the [GitHub issue tracker](https://github.com/Miimansa/Miimansa-DQD/issues). See [CONTRIBUTING.md](CONTRIBUTING.md) for which issues belong here and which belong upstream.
+* Questions about DataQualityDashboard in general: the [OHDSI Forum](http://forums.ohdsi.org/c/developers).
+* Security issues: see [SECURITY.md](SECURITY.md). Please never post real patient data in an issue.
+
 License
 =======
-DataQualityDashboard is licensed under Apache License 2.0
+Miimansa DQD is licensed under the [Apache License 2.0](LICENSE). It is a modified version of OHDSI DataQualityDashboard, which is also licensed under Apache License 2.0. See [NOTICE](NOTICE) for attribution.
 
 Development
 ===========
-DataQualityDashboard is being developed in R Studio.
-
-### Development status
-
-DataQualityDashboard latest release (representing code in the `main` branch) is ready for use. 
+Miimansa DQD is maintained by [Miimansa](https://miimansa.com). Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 # Acknowledgements
-- This project is supported in part through the National Science Foundation grant IIS 1251151.
+- DataQualityDashboard is developed by [OHDSI](https://www.ohdsi.org/) and its contributors. This fork builds directly on their work.
+- The upstream project is supported in part through the National Science Foundation grant IIS 1251151.
 
 <b id="f1">1</b> Kahn, M.G., et al., A Harmonized Data Quality Assessment Terminology and Framework for the Secondary Use of Electronic Health Record Data. EGEMS (Wash DC), 2016. 4(1): p. 1244. [↩](#kahn)

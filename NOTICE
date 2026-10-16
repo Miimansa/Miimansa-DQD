@@ -1,0 +1,16 @@
+Miimansa DQD
+Copyright 2026 Miimansa
+
+This product is a modified version of DataQualityDashboard, developed by
+Observational Health Data Sciences and Informatics (OHDSI):
+https://github.com/OHDSI/DataQualityDashboard
+Copyright 2026 Observational Health Data Sciences and Informatics
+
+Both the original work and Miimansa's modifications are licensed under the
+Apache License, Version 2.0. See the LICENSE file for the full text.
+
+Miimansa's modifications add row-level traceability to the data quality checks:
+capturing the records that cause a check to fail, writing them to a separate
+row-level violations file, and persisting them to database tables. Files that
+Miimansa changed or added are marked as such in their headers. The full list of
+changes is in NEWS.md.

@@ -1,4 +1,5 @@
 # Copyright 2026 Observational Health Data Sciences and Informatics
+# Modified 2026 by Miimansa: verbose-mode check execution and per-check progress logging.
 #
 # This file is part of DataQualityDashboard
 #
